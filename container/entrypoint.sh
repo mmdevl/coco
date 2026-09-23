@@ -22,12 +22,6 @@ fi
 # make sure coco actually owns its home before anything writes into it.
 sudo mkdir -p "$HOME"
 sudo chown -R coco:coco "$HOME"
-# the image builds `claude install` output (~/.local) as root, since a
-# large host UID may be unmappable at build time under rootless podman
-# (see Dockerfile). hand it to coco now so claude can self-update.
-if [ -d "$HOME/.local" ]; then
-  sudo chown -R coco: "$HOME/.local"
-fi
 
 # ~/.claude is bind-mounted as a directory; ~/.claude.json lives inside it
 # (as claude.json) and is symlinked here, so claude's atomic config writes
