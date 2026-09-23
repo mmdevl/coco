@@ -21,7 +21,7 @@ fi
 # auto-creates bind-mount parent dirs but doesn't guarantee ownership, so
 # make sure coco actually owns its home before anything writes into it.
 sudo mkdir -p "$HOME"
-sudo chown coco: "$HOME"
+sudo chown -R coco:coco "$HOME"
 # the image builds `claude install` output (~/.local) as root, since a
 # large host UID may be unmappable at build time under rootless podman
 # (see Dockerfile). hand it to coco now so claude can self-update.

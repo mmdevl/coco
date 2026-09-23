@@ -1,8 +1,20 @@
 #!/bin/bash
+
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+_binpath="$(realpath "${0}")"
+SCRIPT_DIR="${_binpath%%/coco}"
+REPO_DIR="${SCRIPT_DIR%%/bin}"
+
+[[ -d "$SCRIPT_DIR" ]] || { 
+    echo  "$SCRIPT_DIR is not a directory" 
+    exit 1 
+} >&2
+
+[[ -d "$REPO_DIR" ]] || { 
+    echo "$REPO_DIR is not a directory" 
+    exit 1 
+} >&2
 
 # --- version ---
 # missing/malformed VERSION is never fatal: it degrades to exactly the
