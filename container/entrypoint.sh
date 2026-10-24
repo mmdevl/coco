@@ -20,8 +20,12 @@ fi
 # marketplace install locations) still resolve in-container. docker
 # auto-creates bind-mount parent dirs but doesn't guarantee ownership, so
 # make sure coco actually owns its home before anything writes into it.
+# -R is required, not just the top-level dir: bind-mount parents created
+# by the runtime (~/.config and ~/.local/share for opencode's mounts) and
+# the image's root-built ~/.local (claude install, see Dockerfile) are
+# root-owned, so without -R agents hit EACCES creating dirs under them.
 sudo mkdir -p "$HOME"
-sudo chown coco:coco "$HOME"
+sudo chown -R coco:coco "$HOME"
 
 # ~/.claude is bind-mounted as a directory; ~/.claude.json lives inside it
 # (as claude.json) and is symlinked here, so claude's atomic config writes

@@ -586,6 +586,10 @@ agent_mounts() {
     opencode)
       echo "$HOME/.config/opencode:$HOME/.config/opencode"
       echo "$HOME/.local/share/opencode:$HOME/.local/share/opencode"
+      # XDG state dir (logs, session state). without this mount docker
+      # creates ~/.local in-container as a root-owned mount parent, and
+      # opencode's mkdir of .local/state/opencode fails with EACCES.
+      echo "$HOME/.local/state/opencode:$HOME/.local/state/opencode"
       ;;
     # qwen-code keeps everything (settings.json, oauth_creds.json, file-history,
     # per-project state) in a single dir, gemini-cli style.
