@@ -20,12 +20,17 @@ fi
 # marketplace install locations) still resolve in-container. docker
 # auto-creates bind-mount parent dirs but doesn't guarantee ownership, so
 # make sure coco actually owns its home before anything writes into it.
-# -R is required, not just the top-level dir: bind-mount parents created
-# by the runtime (~/.config and ~/.local/share for opencode's mounts) and
-# the image's root-built ~/.local (claude install, see Dockerfile) are
-# root-owned, so without -R agents hit EACCES creating dirs under them.
+# Recursion is required, not just the top-level dir: bind-mount parents
+# created by the runtime (~/.config and ~/.local/share for opencode's
+# mounts) and the image's root-built ~/.local (claude install, see
+# Dockerfile) are root-owned, so without it agents hit EACCES creating
+# dirs under them. But never recurse into the bind mounts themselves (the
+# project dir, ~/.claude, caches, ...): they are host-owned, and chown
+# there is at best a slow no-op and on docker/macOS a wall of "Permission
+# denied" that aborts the entrypoint. -xdev stops the descent at the mount
+# boundary; the mountpoint prune skips the mount root itself.
 sudo mkdir -p "$HOME"
-sudo chown -R coco:coco "$HOME"
+sudo find "$HOME" -xdev -type d -exec mountpoint -q {} \; -prune -o -exec chown -h coco:coco {} +
 
 # ~/.claude is bind-mounted as a directory; ~/.claude.json lives inside it
 # (as claude.json) and is symlinked here, so claude's atomic config writes
