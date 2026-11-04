@@ -1,4 +1,6 @@
 #!/bin/bash
+# shellcheck disable=2310
+
 
 set -euo pipefail
 
@@ -101,13 +103,20 @@ ask_yn() {
   local prompt="$1"
   local default="${2:-y}"
   local reply hint
-  [ "$default" = "n" ] && hint="[y/N]" || hint="[Y/n]"
-  read -r -p "$prompt $hint " reply || return 1
-  if [ -z "$reply" ]; then
-    [ "$default" = "y" ]
-  else
-    [[ "$reply" =~ ^[Yy] ]]
-  fi
+  [[ "$default" = "n" ]] && hint="[y/N]" || hint="[Y/n]"
+  read -s -r -p "$prompt $hint " reply
+  case $reply in
+      [Yy])
+          return 0
+          ;;
+      [Nn])
+          return 1
+          ;;
+      *)
+          echo >&2 "ask_yn got no reply"
+          return 1
+          ;;
+  esac
 }
 
 # portable sha256: stock macOS ships `shasum` but not `sha256sum` (that only
