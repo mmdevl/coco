@@ -65,6 +65,9 @@ usage: coco [options]
 environment:
   COCO_NO_UPDATE_CHECK=1     same as --no-update-check
   COCO_UPDATE_REMOTE=<name>  git remote to check for releases (default: origin)
+  COCO_HOST_PORTS=<ports>    host loopback ports reachable as localhost:<port>
+                             in-container, comma-separated (default: 11434, the
+                             ollama port; set empty to disable)
 EOF
 }
 
@@ -358,6 +361,87 @@ if [ "$RUNTIME_BIN" = "podman" ]; then
   fi
 fi
 
+# --- host loopback ports ---
+# a coding agent talking to a local LLM server (ollama listens on the
+# host's 127.0.0.1:11434 by default) would otherwise hit the container's
+# own, empty loopback. rootless podman's default network stack, pasta,
+# can forward connections to a loopback port inside the container to the
+# same port on the host's loopback (-T), so "localhost:11434" keeps
+# working literally: no in-container proxy, and ollama stays bound to
+# loopback on the host. gated on rootless podman + a pasta binary podman
+# can actually use: podman >= 5 reports the one it found (also outside
+# PATH, via helper_binaries_dir); older podman lacks that field, so PATH
+# is the fallback. note "pasta" here is a network *mode*, not an entry in
+# `podman network ls` (that only lists bridge networks, i.e. the default
+# "podman"); rootful podman uses that bridge and never pasta.
+# docker and non-pasta podman have no equivalent. there the container
+# gets the host alias instead (host.docker.internal, which docker only
+# adds on request; podman adds host.containers.internal on its own) and
+# the entrypoint bridges each port container-loopback -> alias over socat,
+# so localhost:<port> works in-container either way. the alias reaches
+# the host's loopback on docker desktop (mac/windows), but on linux it is
+# the bridge gateway, which only reaches services bound to a non-loopback
+# address -- i.e. ollama must listen on the docker0 IP (or 0.0.0.0) there.
+# COCO_HOST_PORTS is comma-separated ports or ranges (8000-8010); empty
+# disables the whole thing.
+COCO_HOST_PORTS="${COCO_HOST_PORTS-11434}"
+HOST_PORTS=()
+IFS=',' read -r -a HOST_PORT_ITEMS <<< "$COCO_HOST_PORTS"
+for p in "${HOST_PORT_ITEMS[@]+"${HOST_PORT_ITEMS[@]}"}"; do
+  p="${p//[[:space:]]/}"
+  [ -z "$p" ] && continue
+  if ! [[ "$p" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
+    echo "error: COCO_HOST_PORTS: invalid entry '$p' (expected a port like 11434 or a range like 8000-8010)" >&2
+    exit 2
+  fi
+  HOST_PORTS+=("$p")
+done
+PASTA_BIN=""
+if [ "$RUNTIME_BIN" = "podman" ] && [ "${PODMAN_ROOTLESS:-}" = "true" ]; then
+  PASTA_BIN="$("$RUNTIME_BIN" info --format '{{.Host.Pasta.Executable}}' 2>/dev/null)" || PASTA_BIN=""
+  if [ -z "$PASTA_BIN" ] || [ "$PASTA_BIN" = "<no value>" ]; then
+    PASTA_BIN="$(command -v pasta 2>/dev/null || true)"
+  fi
+fi
+RUN_NET_ARGS=()
+if [ "${#HOST_PORTS[@]}" -gt 0 ]; then
+  if [ -n "$PASTA_BIN" ]; then
+    # syntax is mode:opt,opt,... -- a colon after the mode, then one -T
+    # per entry: podman splits the option string on commas into pasta's
+    # argv, so a comma-joined port list would reach pasta as stray
+    # positional arguments (which it reads as a PID to attach to). ranges
+    # contain no comma and pass through as a single argument. (a comma
+    # after "pasta" instead of the colon makes podman look up a *named*
+    # network "pasta", which does not exist.)
+    PASTA_NET="pasta"
+    sep=":"
+    for p in "${HOST_PORTS[@]}"; do
+      PASTA_NET+="${sep}-T,$p"
+      sep=","
+    done
+    RUN_NET_ARGS+=(--network="$PASTA_NET")
+  else
+    HOST_ALIAS="host.containers.internal"
+    if [ "$RUNTIME_BIN" = "docker" ]; then
+      HOST_ALIAS="host.docker.internal"
+      RUN_NET_ARGS+=(--add-host="$HOST_ALIAS:host-gateway")
+    fi
+    RUN_NET_ARGS+=(-e COCO_HOST_ALIAS="$HOST_ALIAS")
+    RUN_NET_ARGS+=(-e COCO_HOST_PORTS="$(IFS=,; echo "${HOST_PORTS[*]}")")
+  fi
+fi
+# SELinux hosts (Fedora, RHEL, ...) label bind mounts off-limits to the
+# container unless the mount carries :Z, which relabels the host path
+# with a private container label. :Z is the right choice over :z here
+# since every mount is per-project or per-user and never shared between
+# running containers. gated on podman + an active SELinux (the enforce
+# node only exists when SELinux is enabled and mounted): plain docker and
+# SELinux-less hosts get the same unsuffixed mounts as before.
+VOL_OPT=""
+if [ "$RUNTIME_BIN" = "podman" ] && [ -e /sys/fs/selinux/enforce ]; then
+  VOL_OPT=":Z"
+fi
+
 # handled before any .coco/ dir creation below: --cleanup is not tied to a
 # project, and must not litter a stray .coco/ in whatever directory it's
 # run from.
@@ -389,7 +473,7 @@ BUILD_TAGS=(-t "$IMAGE")
 [ -n "$COCO_VERSION" ] && BUILD_TAGS+=(-t "$IMAGE_REPO:$COCO_VERSION")
 
 # an explicit `--rebuild` is the user's signal to also refresh the coding
-# agent CLIs (claude, codex, gemini-cli, cursor): they're installed unpinned
+# agent CLIs (claude, codex, gemini-cli, cursor, opencode, qwen): they're installed unpinned
 # in the Dockerfile, so a same-Dockerfile rebuild would otherwise just reuse
 # Docker's cached npm-install layer forever. A passive hash-triggered rebuild
 # (Dockerfile/VERSION actually changed) does NOT bust this -- that already
@@ -481,7 +565,7 @@ fi
 # --- agent selection ---
 # (plain case statement instead of an associative array: macOS ships bash 3.2
 # as /bin/bash, which has no associative array support)
-AGENT_NAMES=(claude codex copilot cursor gemini)
+AGENT_NAMES=(claude codex copilot cursor gemini opencode qwen)
 agent_mounts() {
   case "$1" in
     # .claude.json is intentionally NOT bind-mounted directly: it lives inside
@@ -508,6 +592,17 @@ agent_mounts() {
     copilot) echo "$HOME/.config/gh-copilot:$HOME/.config/gh-copilot" ;;
     cursor) echo "$HOME/.cursor:$HOME/.cursor" ;;
     gemini) echo "$HOME/.gemini:$HOME/.gemini" ;;
+    opencode)
+      echo "$HOME/.config/opencode:$HOME/.config/opencode"
+      echo "$HOME/.local/share/opencode:$HOME/.local/share/opencode"
+      # XDG state dir (logs, session state). without this mount docker
+      # creates ~/.local in-container as a root-owned mount parent, and
+      # opencode's mkdir of .local/state/opencode fails with EACCES.
+      echo "$HOME/.local/state/opencode:$HOME/.local/state/opencode"
+      ;;
+    # qwen-code keeps everything (settings.json, oauth_creds.json, file-history,
+    # per-project state) in a single dir, gemini-cli style.
+    qwen) echo "$HOME/.qwen:$HOME/.qwen" ;;
   esac
 }
 
@@ -629,7 +724,7 @@ for agent in "${SELECTED[@]+"${SELECTED[@]}"}"; do
         continue
       fi
     fi
-    MOUNT_ARGS+=(-v "$host_path:$container_path")
+    MOUNT_ARGS+=(-v "$host_path:$container_path$VOL_OPT")
   done
 done
 
@@ -653,6 +748,7 @@ CONTAINER_NAME="coco-$SLUG"
 exec "$RUNTIME_BIN" run --rm -it \
   --name "$CONTAINER_NAME" \
   "${RUN_USERNS_ARGS[@]+"${RUN_USERNS_ARGS[@]}"}" \
+  "${RUN_NET_ARGS[@]+"${RUN_NET_ARGS[@]}"}" \
   -e TZ="$BUILD_TZ" \
   -e HOME="$HOME" \
   -e TERM="${TERM:-xterm-256color}" \
@@ -661,11 +757,11 @@ exec "$RUNTIME_BIN" run --rm -it \
   -e GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-}" \
   -e XDEBUG_ENABLE="${XDEBUG_ENABLE:-0}" \
   -w "$MOUNT_PATH" \
-  -v "$PROJECT_DIR:$MOUNT_PATH" \
-  -v "$COCO_DIR/cache/pip:$HOME/.cache/pip" \
-  -v "$COCO_DIR/cache/npm:$HOME/.cache/npm" \
-  -v "$COCO_DIR/cache/composer:$HOME/.cache/composer" \
-  -v "$COCO_DIR/bash_history:$HOME/.bash_history" \
-  -v "$COCO_DIR/vim:$HOME/.vim" \
+  -v "$PROJECT_DIR:$MOUNT_PATH$VOL_OPT" \
+  -v "$COCO_DIR/cache/pip:$HOME/.cache/pip$VOL_OPT" \
+  -v "$COCO_DIR/cache/npm:$HOME/.cache/npm$VOL_OPT" \
+  -v "$COCO_DIR/cache/composer:$HOME/.cache/composer$VOL_OPT" \
+  -v "$COCO_DIR/bash_history:$HOME/.bash_history$VOL_OPT" \
+  -v "$COCO_DIR/vim:$HOME/.vim$VOL_OPT" \
   "${MOUNT_ARGS[@]+"${MOUNT_ARGS[@]}"}" \
   "$IMAGE"
