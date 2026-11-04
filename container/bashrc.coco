@@ -24,4 +24,5 @@ claude-login() {
 }
 export -f claude-login
 
+set -o vi
 # vi:ts=4:sts=4:sw=4:ft=bash:ai:et

@@ -66,6 +66,7 @@ setopt SHARE_HISTORY			# Share history between all sessions
 setopt TYPESET_SILENT
 # End of lines configured by zsh-newuser-install
 
+bindkey -v
 # <CTRL>->E opens up vim to edit your commandline
 # and/or write entire scripts
 autoload -Uz edit-command-line
