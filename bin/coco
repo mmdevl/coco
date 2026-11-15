@@ -66,6 +66,12 @@ environment:
   COCO_HOST_PORTS=<ports>    host loopback ports reachable as localhost:<port>
                              in-container, comma-separated (default: 11434, the
                              ollama port; set empty to disable)
+  COCO_OBSIDIAN_VAULT=<dir>  mount this Obsidian vault dir at the same
+                             path in-container (optional, off by default --
+                             e.g. ~/Documents/Obsidian Vault; empty = off).
+                             exported into the container (empty when no
+                             mount) so in-container agents can find the
+                             vault instead of guessing its path
 EOF
 }
 
@@ -729,6 +735,32 @@ for agent in "${SELECTED[@]+"${SELECTED[@]}"}"; do
   done
 done
 
+# --- optional Obsidian vault mount ---
+# opt-in: mounted only when COCO_OBSIDIAN_VAULT names a dir (e.g.
+# ~/Documents/Obsidian Vault); unset or empty means no mount, same "empty
+# disables" semantics as COCO_HOST_PORTS. per-user, not per-project: the
+# vault lives outside any single project, so it is exposed under the
+# identical absolute path in-container (same argument as $HOME above -- see
+# agent_mounts()). the var is also exported in-container (empty when off,
+# "empty disables" as above) so the agent running inside finds the vault
+# path instead of guessing one. when the dir is missing we ask (as with
+# the agent config
+# dirs above) instead of letting the runtime auto-create it -- a
+# container-created dir would be the wrong owner on rootless setups.
+COCO_OBSIDIAN_VAULT="${COCO_OBSIDIAN_VAULT-}"
+if [ -n "$COCO_OBSIDIAN_VAULT" ]; then
+  if [ ! -e "$COCO_OBSIDIAN_VAULT" ]; then
+    if ask_yn "Create $COCO_OBSIDIAN_VAULT (Obsidian vault)?"; then
+      mkdir -p "$COCO_OBSIDIAN_VAULT"
+    else
+      COCO_OBSIDIAN_VAULT=""
+    fi
+  fi
+  if [ -n "$COCO_OBSIDIAN_VAULT" ]; then
+    MOUNT_ARGS+=(-v "$COCO_OBSIDIAN_VAULT:$COCO_OBSIDIAN_VAULT$VOL_OPT")
+  fi
+fi
+
 # --- per-project mount path / container name ---
 # mount path matches the host path exactly (not /code/<basename>): the
 # same reasoning as $HOME above (see agent_mounts()) -- any tool that
@@ -757,6 +789,7 @@ exec "$RUNTIME_BIN" run --rm -it \
   -e GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-}" \
   -e GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-}" \
   -e XDEBUG_ENABLE="${XDEBUG_ENABLE:-0}" \
+  -e COCO_OBSIDIAN_VAULT="${COCO_OBSIDIAN_VAULT-}" \
   -w "$MOUNT_PATH" \
   -v "$PROJECT_DIR:$MOUNT_PATH$VOL_OPT" \
   -v "$COCO_DIR/cache/pip:$HOME/.cache/pip$VOL_OPT" \

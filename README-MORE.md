@@ -36,6 +36,7 @@ coco
 - `COCO_NO_UPDATE_CHECK=1` — same as `--no-update-check`
 - `COCO_UPDATE_REMOTE=<name>` — remote to check (default `origin`)
 - `COCO_HOST_PORTS=<ports>` — host loopback ports reachable as `localhost:<port>` in-container; comma-separated ports/ranges (default `11434`, empty disables)
+- `COCO_OBSIDIAN_VAULT=<dir>` — mount an Obsidian vault dir at the same absolute path in-container (opt-in, off by default; e.g. `~/Documents/Obsidian Vault`; unset/empty = no mount). Also exported in-container (empty when no mount), so in-container agents resolve the vault path from it
 
 ## Mount path — why
 - project mounted at same absolute host path → tool caches (claude-mem, `.git` worktrees, LSP) stay valid both sides
