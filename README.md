@@ -1,6 +1,6 @@
 # 🥥 coco
 
-Secure your coding environment with this **co**ding **co**ntainer suite – 🥥 **coco** – that mounts `pwd` at same absolute path in-container, with a lot of tools and coding agents. The current base container is **AlmaLinux 10** with the following coding agents installed: **Claude Code, Codex, Copilot, Cursor, Gemini, OpenCode, Qwen Code**.
+Secure your coding environment with this **co**ding **co**ntainer suite – 🥥 **coco** – that mounts `pwd` at same absolute path in-container, with a lot of tools and coding agents. The current base container is **AlmaLinux 10** with the following coding agents installed: **Claude Code, Codex, Copilot, Cursor, Gemini, Hermes, OpenCode, Qwen Code**.
 
 ## Requirements
 
@@ -31,7 +31,7 @@ coco@🥥:~/test-project$ claude
 
 ```bash
 # global, depeding on the selected coding agent
-~/.claude ~/.codex ~/.config/gh-copilot ~/.cursor ~/.gemini ~/.minikube ~/.config/minikube/conf ~/.config/opencode ~/.local/share/opencode ~/.qwen
+~/.claude ~/.codex ~/.config/gh-copilot ~/.cursor ~/.gemini ~/.hermes ~/.minikube ~/.config/minikube/conf ~/.config/opencode ~/.local/share/opencode ~/.qwen
 # per project
 pwd/.coco/{cache/pip,cache/npm,cache/composer,bash_history,vim}
 ```

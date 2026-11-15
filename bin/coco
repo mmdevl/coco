@@ -556,7 +556,7 @@ fi
 # --- agent selection ---
 # (plain case statement instead of an associative array: macOS ships bash 3.2
 # as /bin/bash, which has no associative array support)
-AGENT_NAMES=(claude codex copilot cursor gemini minikube opencode qwen)
+AGENT_NAMES=(claude codex copilot cursor gemini hermes minikube opencode qwen)
 agent_mounts() {
   case "$1" in
     # .claude.json is intentionally NOT bind-mounted directly: it lives inside
@@ -583,6 +583,12 @@ agent_mounts() {
     copilot) echo "$HOME/.config/gh-copilot:$HOME/.config/gh-copilot" ;;
     cursor) echo "$HOME/.cursor:$HOME/.cursor" ;;
     gemini) echo "$HOME/.gemini:$HOME/.gemini" ;;
+    # hermes user state (config.yaml, .env, logs, sessions, skills, profiles)
+    # lives in ~/.hermes; the checkout + dependency store (the Python runtime
+    # itself) are baked under ${HOME}/.local/share/hermes and the launcher in
+    # ~/.local/bin (see Dockerfile), so this mount carries data only and the
+    # host mount can never shadow the runtime.
+    hermes) echo "$HOME/.hermes:$HOME/.hermes" ;;
     minikube)
       echo "$HOME/.minikube:$HOME/.minikube"
       echo "$HOME/.config/minikube/conf:$HOME/.config/minikube/conf"

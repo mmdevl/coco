@@ -40,6 +40,38 @@ if [ -d "$HOME/.claude" ]; then
   ln -sf .claude/claude.json "$HOME/.claude.json"
 fi
 
+# hermes (baked into the image, see Dockerfile): its committed dependency
+# environment is recorded per checkout under
+# $HOME/.hermes/installs/<sha256(checkout path)> -- and $HOME/.hermes is
+# hermes's host bind mount, so on a host where hermes is newly selected
+# the record is missing and hermes has no venv until it provisions once.
+# Do that one-time provisioning here instead of letting the user's first
+# `hermes` invocation build it: the probe is a cheap read of PM's record
+# via the store's managed python (no network), and the repair is
+# near-offline -- the uv package cache ships seeded beside the store and
+# pm merges it into its own cache on first use. Best effort: if it can't
+# finish now (no network), hermes self-provisions on first use anyway.
+if [ -x "$HOME/.local/bin/hermes" ]; then
+  _hrt="${HERMES_RUNTIME_DIR:-$HOME/.local/share/hermes/tools}"
+  _hrepo="$HOME/.local/share/hermes/hermes-agent"
+  _hpy="$(ls -d "${_hrt}"/python-*/bin/python3 2>/dev/null | head -n 1)"
+  if [ -n "${_hpy}" ] && [ -f "${_hrepo}/uv.lock" ] \
+      && ! "${_hpy}" -I -c '
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from pm.environments import committed_venv
+sys.exit(0 if committed_venv(Path(sys.argv[1])) is not None else 1)
+' "${_hrepo}" >/dev/null 2>&1
+  then
+    if "$HOME/.local/bin/hermes" pm repair >/dev/null 2>&1; then
+      echo "hermes: dependency environment provisioned (first run on this host)"
+    else
+      echo "hermes: first-run provisioning deferred; it will finish on first use" >&2
+    fi
+  fi
+fi
+
 if [ -n "${GIT_AUTHOR_NAME:-}" ]; then
   git config --global user.name "$GIT_AUTHOR_NAME"
 fi
