@@ -556,7 +556,7 @@ fi
 # --- agent selection ---
 # (plain case statement instead of an associative array: macOS ships bash 3.2
 # as /bin/bash, which has no associative array support)
-AGENT_NAMES=(claude codex copilot cursor gemini opencode qwen)
+AGENT_NAMES=(claude codex copilot cursor gemini minikube opencode qwen)
 agent_mounts() {
   case "$1" in
     # .claude.json is intentionally NOT bind-mounted directly: it lives inside
@@ -583,6 +583,10 @@ agent_mounts() {
     copilot) echo "$HOME/.config/gh-copilot:$HOME/.config/gh-copilot" ;;
     cursor) echo "$HOME/.cursor:$HOME/.cursor" ;;
     gemini) echo "$HOME/.gemini:$HOME/.gemini" ;;
+    minikube)
+      echo "$HOME/.minikube:$HOME/.minikube"
+      echo "$HOME/.config/minikube/conf:$HOME/.config/minikube/conf"
+      ;;
     opencode)
       echo "$HOME/.config/opencode:$HOME/.config/opencode"
       echo "$HOME/.local/share/opencode:$HOME/.local/share/opencode"

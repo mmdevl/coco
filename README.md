@@ -31,7 +31,7 @@ coco@🥥:~/test-project$ claude
 
 ```bash
 # global, depeding on the selected coding agent
-~/.claude ~/.codex ~/.config/gh-copilot ~/.cursor ~/.gemini ~/.config/opencode ~/.local/share/opencode ~/.qwen
+~/.claude ~/.codex ~/.config/gh-copilot ~/.cursor ~/.gemini ~/.minikube ~/.config/minikube/conf ~/.config/opencode ~/.local/share/opencode ~/.qwen
 # per project
 pwd/.coco/{cache/pip,cache/npm,cache/composer,bash_history,vim}
 ```
