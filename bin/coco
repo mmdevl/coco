@@ -66,12 +66,15 @@ environment:
   COCO_HOST_PORTS=<ports>    host loopback ports reachable as localhost:<port>
                              in-container, comma-separated (default: 11434, the
                              ollama port; set empty to disable)
-  COCO_OBSIDIAN_VAULT=<dir>  mount this Obsidian vault dir at the same
-                             path in-container (optional, off by default --
-                             e.g. ~/Documents/Obsidian Vault; empty = off).
-                             exported into the container (empty when no
-                             mount) so in-container agents can find the
-                             vault instead of guessing its path
+  COCO_OBSIDIAN_VAULT=<dir>  mount this Obsidian vault dir into the
+                             container at $HOME/Documents/Obsidian Vault
+                             (optional, off by default -- e.g.
+                             ~/Nextcloud/Notes/Obsidian;
+                             empty = off). that fixed path is a known
+                             location in the obsidian skill's resolution
+                             chain, so in-container agents find the vault
+                             via that chain -- the var is NOT exported
+                             into the container
 EOF
 }
 
@@ -737,16 +740,20 @@ done
 
 # --- optional Obsidian vault mount ---
 # opt-in: mounted only when COCO_OBSIDIAN_VAULT names a dir (e.g.
-# ~/Documents/Obsidian Vault); unset or empty means no mount, same "empty
-# disables" semantics as COCO_HOST_PORTS. per-user, not per-project: the
-# vault lives outside any single project, so it is exposed under the
-# identical absolute path in-container (same argument as $HOME above -- see
-# agent_mounts()). the var is also exported in-container (empty when off,
-# "empty disables" as above) so the agent running inside finds the vault
-# path instead of guessing one. when the dir is missing we ask (as with
-# the agent config
+# ~/Documents/Nextcloud/Notes/Obsidian); unset or empty means no mount,
+# same "empty disables" semantics as COCO_HOST_PORTS. the vault lands at
+# ONE fixed in-container path -- $HOME/Documents/Obsidian Vault, a "known
+# location" in the obsidian skill's resolution chain (see
+# ~/.hermes/skills/note-taking/obsidian) -- so the in-container agent
+# finds it via that chain with no COCO_OBSIDIAN_VAULT exported (the
+# launcher deliberately no longer passes it -e into the container), and
+# any host vault path maps to the same in-container location on every
+# machine. the runtime may auto-create that target in the container
+# layer; it is covered by the mount, so ownership is irrelevant. when the
+# SOURCE dir is missing we still ask (as with the agent config
 # dirs above) instead of letting the runtime auto-create it -- a
 # container-created dir would be the wrong owner on rootless setups.
+OBSIDIAN_MOUNT_TARGET="$HOME/Documents/Obsidian Vault"
 COCO_OBSIDIAN_VAULT="${COCO_OBSIDIAN_VAULT-}"
 if [ -n "$COCO_OBSIDIAN_VAULT" ]; then
   if [ ! -e "$COCO_OBSIDIAN_VAULT" ]; then
@@ -757,7 +764,7 @@ if [ -n "$COCO_OBSIDIAN_VAULT" ]; then
     fi
   fi
   if [ -n "$COCO_OBSIDIAN_VAULT" ]; then
-    MOUNT_ARGS+=(-v "$COCO_OBSIDIAN_VAULT:$COCO_OBSIDIAN_VAULT$VOL_OPT")
+    MOUNT_ARGS+=(-v "$COCO_OBSIDIAN_VAULT:$OBSIDIAN_MOUNT_TARGET$VOL_OPT")
   fi
 fi
 
@@ -789,7 +796,6 @@ exec "$RUNTIME_BIN" run --rm -it \
   -e GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-}" \
   -e GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-}" \
   -e XDEBUG_ENABLE="${XDEBUG_ENABLE:-0}" \
-  -e COCO_OBSIDIAN_VAULT="${COCO_OBSIDIAN_VAULT-}" \
   -w "$MOUNT_PATH" \
   -v "$PROJECT_DIR:$MOUNT_PATH$VOL_OPT" \
   -v "$COCO_DIR/cache/pip:$HOME/.cache/pip$VOL_OPT" \
