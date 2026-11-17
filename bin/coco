@@ -53,7 +53,7 @@ usage: coco [options]
 
   --install           add coco's dir to PATH in ~/.bashrc and exit
   --rebuild           force a rebuild of the coco image
-  --config            re-run coding-agent selection for this project
+  --config            re-run local config selection for this project
   --cleanup           remove old and dangling coco images (never the current one)
   --check-update      check for a new coco release now, ignoring the 24h cache
   --no-update-check   skip the periodic update check for this run
@@ -619,7 +619,7 @@ agent_mounts() {
 # numbered-input fallback: used whenever a raw-mode checklist can't run
 # (not a tty, e.g. scripted/piped invocations).
 select_agents_plain() {
-  echo "Select coding agent(s) to enable for this project:"
+  echo "Which local configs should coco mount into the container?"
   local i=1
   for a in "${AGENT_NAMES[@]}"; do
     echo "  $i) $a"
@@ -673,7 +673,7 @@ select_agents() {
     done
   }
 
-  echo "Select coding agent(s) to enable for this project:"
+  echo "Which local configs should coco mount into the container?"
   echo "(up/down move, space toggle, enter confirm)"
   draw
   while true; do
