@@ -631,6 +631,10 @@ select_agents_plain() {
   fi
   local chosen=()
   for n in $selection; do
+    # validate before the arithmetic: a non-numeric token (typo, "1x") is a
+    # fatal error in $((n - 1)) under set -u / non-numeric text -- it kills
+    # the whole coco run instead of just skipping that token.
+    [[ "$n" =~ ^[0-9]+$ ]] || { echo "  skipping '$n' (expected a number)"; continue; }
     local idx=$((n - 1))
     if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#AGENT_NAMES[@]}" ]; then
       chosen+=("${AGENT_NAMES[$idx]}")
