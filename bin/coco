@@ -53,7 +53,7 @@ usage: coco [options]
 
   --install           add coco's dir to PATH in ~/.bashrc and exit
   --rebuild           force a rebuild of the coco image
-  --config            re-run coding-agent selection for this project
+  --config            re-run local config selection for this project
   --cleanup           remove old and dangling coco images (never the current one)
   --check-update      check for a new coco release now, ignoring the 24h cache
   --no-update-check   skip the periodic update check for this run
@@ -66,6 +66,15 @@ environment:
   COCO_HOST_PORTS=<ports>    host loopback ports reachable as localhost:<port>
                              in-container, comma-separated (default: 11434, the
                              ollama port; set empty to disable)
+  COCO_OBSIDIAN_VAULT=<dir>  mount this Obsidian vault dir into the
+                             container at $HOME/Documents/Obsidian Vault
+                             (optional, off by default -- e.g.
+                             ~/Nextcloud/Notes/Obsidian;
+                             empty = off). that fixed path is a known
+                             location in the obsidian skill's resolution
+                             chain, so in-container agents find the vault
+                             via that chain -- the var is NOT exported
+                             into the container
 EOF
 }
 
@@ -556,7 +565,7 @@ fi
 # --- agent selection ---
 # (plain case statement instead of an associative array: macOS ships bash 3.2
 # as /bin/bash, which has no associative array support)
-AGENT_NAMES=(claude codex copilot cursor gemini opencode qwen)
+AGENT_NAMES=(claude codex copilot cursor gemini hermes minikube opencode qwen)
 agent_mounts() {
   case "$1" in
     # .claude.json is intentionally NOT bind-mounted directly: it lives inside
@@ -583,6 +592,16 @@ agent_mounts() {
     copilot) echo "$HOME/.config/gh-copilot:$HOME/.config/gh-copilot" ;;
     cursor) echo "$HOME/.cursor:$HOME/.cursor" ;;
     gemini) echo "$HOME/.gemini:$HOME/.gemini" ;;
+    # hermes user state (config.yaml, .env, logs, sessions, skills, profiles)
+    # lives in ~/.hermes; the checkout + dependency store (the Python runtime
+    # itself) are baked under ${HOME}/.local/share/hermes and the launcher in
+    # ~/.local/bin (see Dockerfile), so this mount carries data only and the
+    # host mount can never shadow the runtime.
+    hermes) echo "$HOME/.hermes:$HOME/.hermes" ;;
+    minikube)
+      echo "$HOME/.minikube:$HOME/.minikube"
+      echo "$HOME/.config/minikube/conf:$HOME/.config/minikube/conf"
+      ;;
     opencode)
       echo "$HOME/.config/opencode:$HOME/.config/opencode"
       echo "$HOME/.local/share/opencode:$HOME/.local/share/opencode"
@@ -600,7 +619,7 @@ agent_mounts() {
 # numbered-input fallback: used whenever a raw-mode checklist can't run
 # (not a tty, e.g. scripted/piped invocations).
 select_agents_plain() {
-  echo "Select coding agent(s) to enable for this project:"
+  echo "Which local configs should coco mount into the container?"
   local i=1
   for a in "${AGENT_NAMES[@]}"; do
     echo "  $i) $a"
@@ -612,6 +631,10 @@ select_agents_plain() {
   fi
   local chosen=()
   for n in $selection; do
+    # validate before the arithmetic: a non-numeric token (typo, "1x") is a
+    # fatal error in $((n - 1)) under set -u / non-numeric text -- it kills
+    # the whole coco run instead of just skipping that token.
+    [[ "$n" =~ ^[0-9]+$ ]] || { echo "  skipping '$n' (expected a number)"; continue; }
     local idx=$((n - 1))
     if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#AGENT_NAMES[@]}" ]; then
       chosen+=("${AGENT_NAMES[$idx]}")
@@ -654,7 +677,7 @@ select_agents() {
     done
   }
 
-  echo "Select coding agent(s) to enable for this project:"
+  echo "Which local configs should coco mount into the container?"
   echo "(up/down move, space toggle, enter confirm)"
   draw
   while true; do
@@ -718,6 +741,36 @@ for agent in "${SELECTED[@]+"${SELECTED[@]}"}"; do
     MOUNT_ARGS+=(-v "$host_path:$container_path$VOL_OPT")
   done
 done
+
+# --- optional Obsidian vault mount ---
+# opt-in: mounted only when COCO_OBSIDIAN_VAULT names a dir (e.g.
+# ~/Documents/Nextcloud/Notes/Obsidian); unset or empty means no mount,
+# same "empty disables" semantics as COCO_HOST_PORTS. the vault lands at
+# ONE fixed in-container path -- $HOME/Documents/Obsidian Vault, a "known
+# location" in the obsidian skill's resolution chain (see
+# ~/.hermes/skills/note-taking/obsidian) -- so the in-container agent
+# finds it via that chain with no COCO_OBSIDIAN_VAULT exported (the
+# launcher deliberately no longer passes it -e into the container), and
+# any host vault path maps to the same in-container location on every
+# machine. the runtime may auto-create that target in the container
+# layer; it is covered by the mount, so ownership is irrelevant. when the
+# SOURCE dir is missing we still ask (as with the agent config
+# dirs above) instead of letting the runtime auto-create it -- a
+# container-created dir would be the wrong owner on rootless setups.
+OBSIDIAN_MOUNT_TARGET="$HOME/Documents/Obsidian Vault"
+COCO_OBSIDIAN_VAULT="${COCO_OBSIDIAN_VAULT-}"
+if [ -n "$COCO_OBSIDIAN_VAULT" ]; then
+  if [ ! -e "$COCO_OBSIDIAN_VAULT" ]; then
+    if ask_yn "Create $COCO_OBSIDIAN_VAULT (Obsidian vault)?"; then
+      mkdir -p "$COCO_OBSIDIAN_VAULT"
+    else
+      COCO_OBSIDIAN_VAULT=""
+    fi
+  fi
+  if [ -n "$COCO_OBSIDIAN_VAULT" ]; then
+    MOUNT_ARGS+=(-v "$COCO_OBSIDIAN_VAULT:$OBSIDIAN_MOUNT_TARGET$VOL_OPT")
+  fi
+fi
 
 # --- per-project mount path / container name ---
 # mount path matches the host path exactly (not /code/<basename>): the

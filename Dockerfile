@@ -22,6 +22,7 @@ RUN dnf install -y epel-release \
     git vim less curl wget jq rsync unzip zip tar make gcc which \
     screen htop strace lsof procps-ng \
     mariadb sqlite \
+    libatomic \
     python3 python3-pip python3-virtualenv \
     python3.14 python3.14-pip \
     openldap-clients \
@@ -124,6 +125,113 @@ RUN (grp="$(getent group "${GID}" | cut -d: -f1)"; \
 # else puts it there (no skel .bash_profile, see -M above).
 RUN HOME="${HOME}" claude install
 ENV PATH="${HOME}/.local/bin:${PATH}"
+
+# --- hermes (Nous Research) ---
+# pip/PyPI is not a supported install path upstream (setup.py refuses to
+# build wheels outside Nix, and no prebuilt assets are published), so bake
+# the official source install instead -- exactly what a host user gets from
+# install.sh: clone -> `hermes pm install` (pinned uv, managed Python,
+# hash-verified venv, build toolchain) -> command publication + TUI build.
+# Layout constraints:
+#  - checkout and the PM dependency store must NOT live under ~/.hermes:
+#    that dir is bind-mounted from the host as hermes's user state
+#    (config.yaml, .env, logs, sessions, skills, profiles), and the host
+#    mount would shadow anything baked in there. both default locations
+#    sit under $HERMES_HOME (hermes-agent/, tools/), so redirect the
+#    checkout under .local/share/hermes and pin the store root via
+#    HERMES_RUNTIME_DIR (the supported knob). the launcher pins its store
+#    interpreter by absolute path, and entrypoint.sh chowns this tree at
+#    start (it's under $HOME, not a bind mount), so it stays writable for
+#    `hermes update` / `hermes pm install`.
+#  - the store root must also survive as an image ENV: hermes's source
+#    install stamp carries no runtimeDir, so at runtime every store lookup
+#    (the launcher pins its own Python, but pm tool syncs, venv validation,
+#    `hermes pm install ...`) resolves the store from HERMES_RUNTIME_DIR --
+#    defaulting to <home>/tools, i.e. the mounted host dir. same trick the
+#    vendor's own container ships (ENV HERMES_RUNTIME_DIR=/opt/hermes/tools).
+# --skip-browser/--skip-computer-use: coco is a CLI/TUI box and those are
+# heavy; both opt back in with `hermes pm install chromium` / `cua-driver`.
+# unpinned, like the agents above: fresh stable at build time, and
+# `coco --rebuild` (cache-bust below) refreshes the release.
+# Network: pm's artifact downloader has no read timeout and stalls
+# indefinitely from some networks on Cloudflare-backed peers (npmjs and
+# friends; the same curl succeeds in seconds). So the hash-verified
+# artifact downloads are never left to it: resolve the release, clone it,
+# then pre-seed the store's fetch cache (fetch-<sha256>/<name>) from the
+# checkout's pm/lock.json -- curl + sha256 verify. pm's downloader skips
+# the network entirely when the seeded dest already matches. The seeded
+# fetch dirs are removed again after the install (the unpacked store dirs
+# are what's used at runtime).
+# First run of the box: hermes's committed dependency env is recorded
+# under $HERMES_HOME/installs/<sha256(checkout path)> -- i.e. in the host
+# bind mount, so a fresh host starts without it. entrypoint.sh provisions
+# it once (see entrypoint.sh); to keep that step near-offline, the uv
+# package cache is seeded next to the store at <store>/../uv-cache, which
+# pm merges into its machine cache on first use. For the same reason the
+# `hermes --version` smoke test runs before ~/.hermes is wiped -- after
+# the wipe the record is gone and hermes would demand `pm repair`.
+RUN echo "cache-bust: ${COCO_AGENTS_CACHE_BUST}" \
+  && curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o /tmp/hermes-install.sh \
+  && HTOOLS="${HOME}/.local/share/hermes/tools" \
+  && HREPO="${HOME}/.local/share/hermes/hermes-agent" \
+  && mkdir -p "${HTOOLS}" \
+  && TAG="$(curl -fsSL --connect-timeout 5 --max-time 20 \
+       -H 'Accept: application/vnd.github+json' \
+       https://api.github.com/repos/NousResearch/hermes-agent/releases/latest 2>/dev/null \
+       | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)" \
+  && { printf '%s' "${TAG}" | grep -Eq '^v(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+      || TAG="$(git ls-remote --tags --refs \
+           https://github.com/NousResearch/hermes-agent.git 'refs/tags/v*' \
+           | sed 's#.*refs/tags/##' \
+           | grep -E '^v(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+           | sort -V | tail -n 1)"; } \
+  && test -n "${TAG}" \
+  && git clone --branch "${TAG}" \
+       https://github.com/NousResearch/hermes-agent.git "${HREPO}" \
+  && (cd "${HREPO}" \
+      && jq -r ' \
+         ["uv","bws","ffmpeg","gh","just","node","npm","pnpm","python","ripgrep"] as $want \
+         | .packages | with_entries(select(.key as $k | ($want | index($k)) != null)) \
+         | .[] | .artifacts | to_entries \
+         | map(select(.key == "linux-x64" or .key == "any")) \
+         | map(.value) \
+         | map(if type == "array" then .[] else . end) \
+         | map(select(has("url") and has("sha256"))) \
+         | unique_by([.url, .sha256]) \
+         | .[] | [.url, .sha256] | @tsv \
+       ' pm/lock.json > /tmp/hermes-seeds.tsv) \
+  && test -s /tmp/hermes-seeds.tsv \
+  && while IFS="$(printf '\t')" read -r url sha; do \
+       name="${url##*/}"; \
+       dest="${HTOOLS}/fetch-${sha}/${name}"; \
+       if [ -f "${dest}" ] && [ "$(sha256sum "${dest}" | cut -d' ' -f1)" = "${sha}" ]; then \
+         continue; \
+       fi; \
+       curl -fSL --retry 3 --max-time 900 -o /tmp/hermes-seed.tmp "${url}" \
+           || { echo "hermes: seed download failed: ${url}" >&2; exit 1; }; \
+       act="$(sha256sum /tmp/hermes-seed.tmp | cut -d' ' -f1)"; \
+       if [ "${act}" != "${sha}" ]; then \
+         echo "hermes: seed sha256 mismatch for ${url}" >&2; exit 1; \
+       fi; \
+       mkdir -p "$(dirname "${dest}")" && mv /tmp/hermes-seed.tmp "${dest}"; \
+     done < /tmp/hermes-seeds.tsv \
+  && rm -f /tmp/hermes-seeds.tsv \
+  && HOME="${HOME}" \
+     HERMES_RUNTIME_DIR="${HTOOLS}" \
+     NODE_OPTIONS=--dns-result-order=ipv4first \
+     bash /tmp/hermes-install.sh --non-interactive \
+          --skip-browser --skip-computer-use \
+          --dir "${HREPO}" \
+  && HERMES_RUNTIME_DIR="${HTOOLS}" "${HOME}/.local/bin/hermes" --version \
+  && find "${HTOOLS}" -maxdepth 1 -type d -name 'fetch-*' -exec rm -rf {} + \
+  && if [ -d "${HOME}/.hermes/cache/uv" ]; then \
+       cp -a "${HOME}/.hermes/cache/uv" "${HOME}/.local/share/hermes/uv-cache"; \
+     fi \
+  && rm -rf "${HOME}/.hermes" "${HOME}/.cache/uv" \
+  && rm -f /tmp/hermes-install.sh \
+  && test -x "${HOME}/.local/bin/hermes" \
+  && test -d "${HOME}/.local/share/hermes/uv-cache"
+ENV HERMES_RUNTIME_DIR=${HOME}/.local/share/hermes/tools
 
 # --- shell / vim defaults ---
 COPY container/bashrc.coco /etc/profile.d/coco-bashrc.sh

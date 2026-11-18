@@ -3,7 +3,7 @@
 ## What
 - Docker dev container, mounts `pwd` at same absolute path in-container
 - Base: AlmaLinux 10
-- Agents installed: Claude Code, Codex, Copilot, Cursor, Gemini, Qwen Code, OpenCode
+- Agents installed: Claude Code, Codex, Copilot, Cursor, Gemini, Hermes, Qwen Code, OpenCode
 
 ## Install
 ```
@@ -36,6 +36,7 @@ coco
 - `COCO_NO_UPDATE_CHECK=1` — same as `--no-update-check`
 - `COCO_UPDATE_REMOTE=<name>` — remote to check (default `origin`)
 - `COCO_HOST_PORTS=<ports>` — host loopback ports reachable as `localhost:<port>` in-container; comma-separated ports/ranges (default `11434`, empty disables)
+- `COCO_OBSIDIAN_VAULT=<dir>` — mount an Obsidian vault dir in-container at the fixed fallback path `~/Documents/Obsidian Vault` (opt-in, off by default; e.g. `~/Nextcloud/Notes/Obsidian`; unset/empty = no mount). That path is a known location in the obsidian skill's resolution chain, so in-container agents resolve the vault via the skill's chain; the var is NOT exported into the container
 
 ## Mount path — why
 - project mounted at same absolute host path → tool caches (claude-mem, `.git` worktrees, LSP) stay valid both sides
@@ -56,13 +57,14 @@ coco
 - first run: interactive checklist picks agents (0+), saved to `.coco/config` as `AGENTS=claude,codex,...`
 - non-tty: falls back to numbered prompt
 - all agent CLIs installed regardless; selection only controls which host config dirs get mounted
-- config paths: `~/.claude`, `~/.codex`, `~/.config/gh-copilot`, `~/.cursor`, `~/.gemini`, `~/.qwen`, `~/.config/opencode` + `~/.local/share/opencode` (opencode keeps auth/sessions in the XDG data dir, config in the XDG config dir)
+- config paths: `~/.claude`, `~/.codex`, `~/.config/gh-copilot`, `~/.cursor`, `~/.gemini`, `~/.hermes`, `~/.minikube` + `~/.config/minikube/conf`, `~/.qwen`, `~/.config/opencode` + `~/.local/share/opencode` (opencode keeps auth/sessions in the XDG data dir, config in the XDG config dir)
 - `~/.claude.json` NOT bind-mounted directly (breaks atomic writes); host symlinks it into `~/.claude/claude.json`, container entrypoint recreates matching symlink each start
+- hermes is a source install (no official container build): the checkout + its dependency store live in the image under `~/.local/share/hermes/{hermes-agent,tools}` (outside the `~/.hermes` mount, which holds only host-side user state); `HERMES_RUNTIME_DIR` pins the store. First run on a host where hermes is newly selected, the entrypoint provisions its dependency env into the host-mounted `~/.hermes` once (near-offline; hermes otherwise self-provisions on first use)
 - re-run picker: `coco --config`
 
 ## Persistent data
 ```
-global (~/...):     .claude .codex .config/gh-copilot .cursor .gemini .qwen .config/opencode .local/share/opencode
+global (~/...):     .claude .codex .config/gh-copilot .cursor .gemini .hermes .minikube .config/minikube/conf .qwen .config/opencode .local/share/opencode
 project (pwd/.coco/...): cache/pip cache/npm cache/composer bash_history vim
 ```
 - `.coco/` also holds `config`
